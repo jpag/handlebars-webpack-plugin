@@ -15,7 +15,7 @@ const log = require("./utils/log");
  *                                          If ommited, the same filename stripped of its extension will be used
  * @return {String} target filepath
  */
-function getTargetFilepath(filepath, outputTemplate) {
+function getTargetFilepath(filepath, outputTemplate, basePath, pagesAreIndexedFolders) {
     if (outputTemplate == null) {
         return filepath.replace(path.extname(filepath), "");
     }
@@ -23,7 +23,21 @@ function getTargetFilepath(filepath, outputTemplate) {
     const fileName = path
         .basename(filepath)
         .replace(path.extname(filepath), "");
-    return outputTemplate.replace("[name]", fileName);
+
+    var fileNameWithPath = filepath.replace(basePath, "").replace(path.extname(filepath), "").substring(1);
+    
+    console.log(pagesAreIndexedFolders);
+    if (pagesAreIndexedFolders && fileNameWithPath != 'index') {
+        fileNameWithPath += "/index";
+    }
+
+    const output = outputTemplate.replace("[name]", fileNameWithPath);
+
+    console.log(' outputTemplate ' , outputTemplate);
+    console.log(' fileNameWithPath ', fileNameWithPath);
+    console.log(' output ' , output );
+
+    return output;
 }
 
 
@@ -31,6 +45,7 @@ class HandlebarsPlugin {
 
     constructor(options) {
         this.options = Object.assign({
+            pagesAreIndexedFolders: false,
             entry: null,
             output: null,
             data: {},
@@ -46,7 +61,9 @@ class HandlebarsPlugin {
 
         // setup htmlWebpackPlugin default options and merge user configuration
         this.options.htmlWebpackPlugin = Object.assign({ enabled: false, prefix: "html" }, options.htmlWebpackPlugin);
-
+        this.baseDataPath = '';
+        this.baseTemplatePath = '';
+        this.baseTemplateDirectory = '';
         this.firstCompilation = true;
         this.options.onBeforeSetup(Handlebars);
         this.fileDependencies = [];
@@ -235,12 +252,41 @@ class HandlebarsPlugin {
         if (this.options.data && typeof this.options.data === "string") {
             this.data = {};
             const entryFilesArray = glob.sync(this.options.data);
+            
+            this.baseDataPath = this.findBasePath(entryFilesArray);
             entryFilesArray.forEach((filePath) => {
                 this.readDataFile(filePath);
             });
         } else {
             this.data = this.options.data;
+        }            
+    }
+
+    /**
+     * Find base folder for the Data files. 
+     * So subdirectories persist in output and json structures. 
+     *
+     * json example:
+     * subfolder/pagename.json = { subfolder: { pagename: data }}
+     *
+     * output example:
+     * subfolder/pagename.hbs = public/subfolder/pagename
+     *
+     * @param {string} filePath     - path to file/page
+     *
+     */
+    findBasePath(paths) {
+        var matchingPath = paths[0].split('/');
+        for ( var p = 1; p < paths.length; p++) {
+            var pathSplit = paths[p].split('/');
+            for ( var c = matchingPath.length; c > 0; c--) {
+                if ( pathSplit[c] != matchingPath[c] ) {
+                    matchingPath.splice(c, 1);
+                }
+            }
         }
+        var commonPath = matchingPath.join('/');
+        return commonPath;
     }
 
     /**
@@ -252,7 +298,29 @@ class HandlebarsPlugin {
             const dataFromFile = JSON.parse(this.readFile(filePath));
             this.addDependency(filePath);
             const dataKey = path.basename(filePath, ".json");
-            this.data[dataKey] = dataFromFile;
+            
+            var dataKeysTree = filePath.replace(this.baseDataPath, '').split('/');
+            // remove the .json file in the path.
+            dataKeysTree.pop();
+            dataKeysTree.shift();
+
+            // define the datakey with a variable reference.
+            var dataStructure = this.data;
+
+            // loop through the nested keys to define them if not defined.
+            for (var k = 0; k < dataKeysTree.length; k++) {
+                const subKey = dataKeysTree[k];
+                if (!dataStructure[subKey]) {
+                    dataStructure[subKey] = {}
+                }
+                dataStructure = dataStructure[subKey];
+            }
+
+            dataStructure[dataKey] = dataFromFile;
+            
+            // this.data[dataKey] = dataFromFile;
+            // console.log(this.data);
+
         } catch (e) {
             console.error(`Tried to read ${filePath} as json-file and failed. Using it as data source...`);
         }
@@ -276,6 +344,11 @@ class HandlebarsPlugin {
                 log(chalk.yellow(`no valid entry files found for ${this.options.entry} -- aborting`));
                 return;
             }
+
+            this.baseTemplatePath = this.findBasePath(entryFilesArray);
+            
+            console.log(this.baseTemplatePath);
+
             entryFilesArray.forEach((filepath) => this.compileEntryFile(filepath, outputPath));
             // enforce new line after plugin has finished
             console.log();
@@ -290,7 +363,7 @@ class HandlebarsPlugin {
      * @param  {String} outputPath  - webpack output path for build results
      */
     compileEntryFile(sourcePath, outputPath) {
-        let targetFilepath = getTargetFilepath(sourcePath, this.options.output);
+        let targetFilepath = getTargetFilepath(sourcePath, this.options.output, this.baseTemplatePath, this.options.pagesAreIndexedFolders);
         // fetch template content
         let templateContent = this.readFile(sourcePath, "utf-8");
         templateContent = this.options.onBeforeCompile(Handlebars, templateContent) || templateContent;
@@ -304,6 +377,7 @@ class HandlebarsPlugin {
         if (targetFilepath.includes(outputPath)) {
             // change the destination path relative to webpacks output folder and emit it via webpack
             targetFilepath = targetFilepath.replace(outputPath, "").replace(/^\/*/, "");
+
             this.assetsToEmit[targetFilepath] = {
                 source: () => result,
                 size: () => result.length

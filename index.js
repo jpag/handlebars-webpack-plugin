@@ -26,16 +26,11 @@ function getTargetFilepath(filepath, outputTemplate, basePath, pagesAreIndexedFo
 
     var fileNameWithPath = filepath.replace(basePath, "").replace(path.extname(filepath), "").substring(1);
     
-    console.log(pagesAreIndexedFolders);
     if (pagesAreIndexedFolders && fileNameWithPath != 'index') {
         fileNameWithPath += "/index";
     }
 
     const output = outputTemplate.replace("[name]", fileNameWithPath);
-
-    console.log(' outputTemplate ' , outputTemplate);
-    console.log(' fileNameWithPath ', fileNameWithPath);
-    console.log(' output ' , output );
 
     return output;
 }
@@ -347,8 +342,6 @@ class HandlebarsPlugin {
 
             this.baseTemplatePath = this.findBasePath(entryFilesArray);
             
-            console.log(this.baseTemplatePath);
-
             entryFilesArray.forEach((filepath) => this.compileEntryFile(filepath, outputPath));
             // enforce new line after plugin has finished
             console.log();
